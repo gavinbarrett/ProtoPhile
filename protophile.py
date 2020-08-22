@@ -1,23 +1,26 @@
+import sys
 import tty
 import struct
 import socket
 import termios
-
+import asyncio
+from binascii import hexlify
 # create socket object
 s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
 s2 = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
 
+YELLOW = '\u001b[33m'
 GREEN = '\u001b[32m'
 WHITE = '\u001b[37m'
 CYAN = '\u001b[36m'
-def handle_tcp():
-	print("Encountered TCP packet")
-
-def handle_udp():
-	print("Encountered UDP packet")
+BLUE = '\u001b[34m'
+RED = '\u001b[31m'
 
 def unpack_ip(ip_header):
 	return struct.unpack("!BBHHHBBH4s4s", ip_header)
+
+def unpack_eth(eth_header):
+	return struct.unpack("!8s6s6s2s", eth_header)
 
 def get_packet_type(pack_type):
 	if pack_type == 6:
@@ -36,29 +39,27 @@ def host_lookup(addr):
 	except:
 		return addr
 
-def read_socket(sock, i):
+async def read_socket(sock, i):
 	# receive tuple of data and ...
 	packet = sock.recvfrom(65536)
 	# grab network data
 	packet = packet[0]
 	# strip out ip header
 	ip_head = packet[0:20]
+	eth_head = packet[0:22]
+
 	data = packet[24:]
-	#print(f"ip_head: {ip_head}\n")
-	# unpack bytes of ip_header
 	iph = unpack_ip(ip_head)
-	#if iph[6] == 6:
-	#	handle_tcp()
-	#elif iph[6] == 17:
-	#	handle_udp()
+	eth = unpack_eth(eth_head)
+
 	packet_type = get_packet_type(iph[6])
 
 	x = (iph[0] >> 4) & 0x0F
 	#print(f"Version: {x}")
 	#print(f"Total Length: {iph[2]}")
 	#print(f"Protocol: {iph[6]}")
-	#print(f"Header checksum: {iph[7]}")
 	# print source and destination ips
+	
 	src = socket.inet_ntoa(iph[8])
 	# retrieve the src and dest hostnames
 	src_host = host_lookup(socket.inet_ntoa(iph[8]))
@@ -68,12 +69,17 @@ def read_socket(sock, i):
 		COLOR = GREEN
 	else:
 		COLOR = CYAN
-	print(f"{WHITE} #{i}: {COLOR}{packet_type}{WHITE} - {src_host} \u2192 {dest_host}")
+	
+	print(f"{WHITE}#{i}: {COLOR}{packet_type}{WHITE} - {YELLOW}[{BLUE}{src_host}{WHITE} {YELLOW}\u2192 {RED}{dest_host}{WHITE} {YELLOW}chksm: {hex(iph[7])}]{WHITE}:")
+	print(data)
 
-i = 0
-while True:
-	read_socket(s, i)
-	i += 1
-	read_socket(s2, i)
-	i += 1	
-	#print(f"Packet Data:\n{data}\n")
+# set up - read command line args from sys.argv
+async def main():
+	i = 0
+	while True:
+		await read_socket(s, i)
+		i += 1
+		await read_socket(s2, i)
+		i += 1
+
+asyncio.run(main())
