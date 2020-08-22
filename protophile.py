@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import tty
 import struct
@@ -5,9 +6,10 @@ import socket
 import termios
 import asyncio
 from binascii import hexlify
-# create socket object
-s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
-s2 = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+
+# create socket objects
+tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+udp_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
 
 YELLOW = '\u001b[33m'
 GREEN = '\u001b[32m'
@@ -47,39 +49,29 @@ async def read_socket(sock, i):
 	# strip out ip header
 	ip_head = packet[0:20]
 	eth_head = packet[0:22]
-
 	data = packet[24:]
 	iph = unpack_ip(ip_head)
 	eth = unpack_eth(eth_head)
-
 	packet_type = get_packet_type(iph[6])
-
+	# extract version
 	x = (iph[0] >> 4) & 0x0F
-	#print(f"Version: {x}")
-	#print(f"Total Length: {iph[2]}")
-	#print(f"Protocol: {iph[6]}")
-	# print source and destination ips
-	
-	src = socket.inet_ntoa(iph[8])
 	# retrieve the src and dest hostnames
 	src_host = host_lookup(socket.inet_ntoa(iph[8]))
 	dest_host = host_lookup(socket.inet_ntoa(iph[9]))
-	
 	if packet_type == 'TCP':
 		COLOR = GREEN
 	else:
 		COLOR = CYAN
-	
-	print(f"{WHITE}#{i}: {COLOR}{packet_type}{WHITE} - {YELLOW}[{BLUE}{src_host}{WHITE} {YELLOW}\u2192 {RED}{dest_host}{WHITE} {YELLOW}chksm: {hex(iph[7])}]{WHITE}:")
+	print(f"{WHITE}#{i}: {COLOR}{packet_type}{WHITE} - {YELLOW}[{BLUE}{src_host}{WHITE} {YELLOW}\u2192 {RED}{dest_host}{WHITE} {YELLOW}]{WHITE}")
 	print(data)
 
 # set up - read command line args from sys.argv
 async def main():
 	i = 0
 	while True:
-		await read_socket(s, i)
+		await read_socket(tcp_sock, i)
 		i += 1
-		await read_socket(s2, i)
+		await read_socket(udp_sock, i)
 		i += 1
 
 asyncio.run(main())
