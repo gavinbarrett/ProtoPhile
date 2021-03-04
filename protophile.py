@@ -83,7 +83,7 @@ def host_lookup(addr):
 	except:
 		return addr
 
-async def read_socket(idx):
+def read_socket(idx):
 	# receive tuple of data and ...
 	packet = sock.recvfrom(65536)
 	# grab network data
@@ -92,14 +92,16 @@ async def read_socket(idx):
 	dest_mac, src_mac, proto = unpack_eth(packet_data[0:14])
 	# extract IP info
 	version, dest_ip, src_ip = unpack_ip(packet_data[14:34])
-	
 	# extract TCP/UDP/ICMP packet data
 	dest_port, src_port = unpack_tcp(packet_data[34:54])
 	print(f'{END}{idx}| {BLUE}{src_ip}:{src_port}{END}[{YELLOW}{src_mac}{END}] {YELLOW}\u2192 {RED}{dest_ip}:{dest_port}{END}[{YELLOW}{dest_mac}{END}]')
 
-async def listen():
-	for i in range(1, 10):
-		await read_socket(i)
+def listen():
+	idx = 1
+	while True:
+		read_socket(idx)
+		idx += 1
 
 if __name__ == "__main__":
-	asyncio.run(listen())
+	listen()
+	#asyncio.run(listen())
