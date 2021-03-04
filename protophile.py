@@ -5,11 +5,13 @@ import struct
 import socket
 import termios
 import asyncio
+import argparse
 from binascii import hexlify
 
-# create socket objects
-tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
-udp_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+# read all packets captured
+sock = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0800))
+# bind to wireless interface
+sock.bind(('wlp2s0', 0))
 
 YELLOW = '\u001b[33m'
 GREEN = '\u001b[32m'
@@ -17,14 +19,49 @@ WHITE = '\u001b[37m'
 CYAN = '\u001b[36m'
 BLUE = '\u001b[34m'
 RED = '\u001b[31m'
+END = '\033[0m'
 
 def unpack_ip(ip_header):
-	return struct.unpack("!BBHHHBBH4s4s", ip_header)
+	''' Interpret the bytes as an IP header '''
+	# unpack byte stream
+	ip_data = struct.unpack('!BBHHHBBH4s4s', ip_header)
+	#
+	version = ip_data[0]
+	#
+	service_type = ip_data[1]
+	# save length
+	length = ip_data[2]
+	# save source address
+	src = socket.inet_ntoa(ip_data[8])
+	# save destination address
+	dest = socket.inet_ntoa(ip_data[9])
+
+	return version, dest, src
 
 def unpack_eth(eth_header):
-	return struct.unpack("!8s6s6s2s", eth_header)
+	''' Interpret the bytes as an Eth header '''
+	# unpack the ethernet packet
+	ether = struct.unpack('!6s6s2s', eth_header)
+	# extract the destination mac
+	dest_mac = format_mac(ether[0].hex())
+	# extract the src mac address
+	src_mac = format_mac(ether[1].hex())
+	# extract the protocol
+	protocol = ether[2].hex()
+	return dest_mac, src_mac, protocol
 
-def get_packet_type(pack_type):
+def unpack_tcp(tcp_packet):
+	''' Interpret the bytes as a TCP packet '''
+	tcp = struct.unpack('!HHLLBBHHH', tcp_packet)
+	src_port = tcp[0]
+	dest_port = tcp[1]
+	return dest_port, src_port
+
+def unpack_udp(udp_packet):
+	''' Interpret the bytes as a UDP packet '''
+	return struct.unpack('!HHHH', udp_packet)
+
+def unpack_data(pack_type):
 	if pack_type == 6:
 		return 'TCP'
 	elif pack_type == 17:
@@ -32,6 +69,11 @@ def get_packet_type(pack_type):
 	else:
 		print(f'Unknown packet type: {pack_type}')
 		return 'Unknown'
+
+def format_mac(mac):
+	''' Format the MAC address with hyphens '''
+	mac = mac.upper()
+	return ''.join([f'{mac[i:i+2]}-' if i < 10 else f'{mac[i:i+2]}' for i in range(0, len(mac), 2)])
 
 def host_lookup(addr):
 	try:
@@ -41,37 +83,23 @@ def host_lookup(addr):
 	except:
 		return addr
 
-async def read_socket(sock, i):
+async def read_socket(idx):
 	# receive tuple of data and ...
 	packet = sock.recvfrom(65536)
 	# grab network data
-	packet = packet[0]
-	# strip out ip header
-	ip_head = packet[0:20]
-	eth_head = packet[0:22]
-	data = packet[24:]
-	iph = unpack_ip(ip_head)
-	eth = unpack_eth(eth_head)
-	packet_type = get_packet_type(iph[6])
-	# extract version
-	x = (iph[0] >> 4) & 0x0F
-	# retrieve the src and dest hostnames
-	src_host = host_lookup(socket.inet_ntoa(iph[8]))
-	dest_host = host_lookup(socket.inet_ntoa(iph[9]))
-	if packet_type == 'TCP':
-		COLOR = GREEN
-	else:
-		COLOR = CYAN
-	print(f"{WHITE}#{i}: {COLOR}{packet_type}{WHITE} - {YELLOW}[{BLUE}{src_host}{WHITE} {YELLOW}\u2192 {RED}{dest_host}{WHITE} {YELLOW}]{WHITE}")
-	print(data)
+	packet_data, addr = packet
+	# extract MAC info
+	dest_mac, src_mac, proto = unpack_eth(packet_data[0:14])
+	# extract IP info
+	version, dest_ip, src_ip = unpack_ip(packet_data[14:34])
+	
+	# extract TCP/UDP/ICMP packet data
+	dest_port, src_port = unpack_tcp(packet_data[34:54])
+	print(f'{END}{idx}| {BLUE}{src_ip}:{src_port}{END}[{YELLOW}{src_mac}{END}] {YELLOW}\u2192 {RED}{dest_ip}:{dest_port}{END}[{YELLOW}{dest_mac}{END}]')
 
-# set up - read command line args from sys.argv
-async def main():
-	i = 0
-	while True:
-		await read_socket(tcp_sock, i)
-		i += 1
-		await read_socket(udp_sock, i)
-		i += 1
+async def listen():
+	for i in range(1, 10):
+		await read_socket(i)
 
-asyncio.run(main())
+if __name__ == "__main__":
+	asyncio.run(listen())
