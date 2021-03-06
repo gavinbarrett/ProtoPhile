@@ -12,9 +12,10 @@ from binascii import hexlify
 
 # read all packets captured
 sock = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-# bind to wireless interface
+# bind socket to the wireless interface
 sock.bind(('wlp2s0', 0))
 
+# beautiful terminal colors
 YELLOW = '\u001b[33m'
 GREEN = '\u001b[32m'
 WHITE = '\u001b[37m'
@@ -44,7 +45,7 @@ def unpack_ip(ip_header):
 	# save destination address
 	dest = socket.inet_ntoa(ip_data[9])
 	protocol = ip_data[6]
-	return version, dest, src, protocol, iph_length
+	return version, src, dest, protocol, iph_length
 
 def unpack_eth(eth_header):
 	''' Interpret the bytes as an Eth header '''
@@ -54,9 +55,9 @@ def unpack_eth(eth_header):
 	dest_mac = format_mac(ether[0].hex())
 	# extract the src mac address
 	src_mac = format_mac(ether[1].hex())
-	# extract the protocol
-	protocol = ether[2].hex()
-	return dest_mac, src_mac, protocol
+	# extract the type of ethernet frame
+	eth_type = ether[2].hex()
+	return src_mac, dest_mac, eth_type
 
 def unpack_tcp(tcp_packet):
 	''' Interpret the bytes as a TCP packet '''
@@ -65,7 +66,7 @@ def unpack_tcp(tcp_packet):
 	dest_port = tcp[1]
 	#print(f'Src: {src_port}\nDest: {dest_port}')
 	data = ''
-	return dest_port, src_port
+	return src_port, dest_port
 
 def unpack_udp(udp_packet):
 	''' Interpret the bytes as a UDP packet '''
@@ -75,44 +76,77 @@ def unpack_udp(udp_packet):
 	data = ''
 	return src_port, dest_port
 
-def get_proto(proto):
-	if proto == 1:
-		return 'ICMP'
-	elif proto == 6:
-		return 'TCP'
-	elif proto == 17:
-		return 'UDP'
-	else:
-		return 'UNK'
-
-def unpack_data(protocol, data, iph):
-	if protocol == 1:
-		# ICMP Packet
-		return ("ICMP", "ICMP")
-	elif protocol == 6:
-		# TCP Packet
-		return unpack_tcp(data[34:54])
-	elif protocol == 17:
-		# UDP Packet
-		return unpack_udp(data[34:42])
-	elif protocol == 50:
-		# Encapsulation Security Payload
-		#print('ESP Packet encountered')
+def unpack_data(eth_type, protocol, data, iph):
+	if eth_type == '0800':
+		# IPv4 frame encountered
+		if protocol == 1:
+			# ICMP Packet
+			return ("ICMP", "ICMP")
+		elif protocol == 6:
+			# TCP Packet
+			return unpack_tcp(data[34:54])
+		elif protocol == 17:
+			# UDP Packet
+			return unpack_udp(data[34:42])
+		elif protocol == 50:
+			# Encapsulation Security Payload
+			print('ESP Packet encountered')
+			return (None, None)
+		elif protocol == 51:
+			# Authentication Header
+			print('AH Packet encountered')
+			return (None, None)
+		else:
+			print(f'Unknown packet type: Protocol #{protocol}')
+			return (None, None)
+	elif eth_type == '86DD':
+		# IPv6 frame detected
+		print('IPv6 frame detected')
 		return (None, None)
-	elif protocol == 51:
-		# Authentication Header
-		#print('AH Packet encountered')
-		return (None, None)
-	else:
-		#print(f'Unknown packet type: Protocol #{protocol}')
-		return (None, None)
+	elif eth_type == '0806':
+		print('ARP packet detected')
+		return ("ARP", "ARP")
+	return (None, None)
 
 def format_mac(mac):
 	''' Format the MAC address with hyphens '''
-	# convert chars to uppercase
-	#mac = mac.upper()
 	# insert hyphens
 	return ''.join([f'{mac[i:i+2]}:' if i < 10 else f'{mac[i:i+2]}' for i in range(0, len(mac), 2)])
+
+
+def serialize_packet_info(src_mac, dest_mac, eth_type, packet_data):
+	if eth_type == "0800":
+		# extract IP info
+		version, src_ip, dest_ip, protocol, iph_length = unpack_ip(packet_data[14:34])
+		# IPv4
+		if protocol == 1:
+			# ICMP packet
+			return f'{BLUE}{src_ip : <15}{END}[{src_mac}{END}] ICMP  {YELLOW}\u27f9   {RED}{dest_ip : <15}{END}[{dest_mac}{END}]'
+		elif protocol == 6:
+			# TCP packet
+			src_port, dest_port = unpack_tcp(packet_data[34:54])
+			src = f'{src_ip}:{END}{src_port}'
+			dest = f'{dest_ip}:{END}{dest_port}'
+			return f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] TCP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
+		elif protocol == 17:
+			# UDP packet
+			src_port, dest_port = unpack_udp(packet_data[34:42])
+			src = f'{src_ip}:{END}{src_port}'
+			dest = f'{dest_ip}:{END}{dest_port}'
+			return f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] UDP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
+	elif eth_type == "86DD":
+		# IPv6 packet detected
+		pass
+	elif eth_type == "0806":
+		# ARP packet
+		src = f'{END}[{CYAN}{src_mac}{END}]'
+		dest = f'{END}[{CYAN}{dest_mac}{END}]'
+		return f'{src : >53} ARP  {YELLOW}\u27f9  {dest : >54}'
+	# drop packets that aren't ICMP/TCP/UDP
+	
+def display_packet_info(src_mac, dest_mac, eth_type, packet_data):
+	''' Print the packet info to the console '''
+	print(serialize_packet_info(src_mac, dest_mac, eth_type, packet_data))
 
 def host_lookup(addr):
 	try:
@@ -122,39 +156,20 @@ def host_lookup(addr):
 	except:
 		return addr
 
-
-async def read_socket(idx):
-	
+async def read_socket():
+	''' Read a packet from the socket '''	
 	# receive tuple of data and ...
 	packet = sock.recvfrom(65536)
-	
 	# grab network data
 	packet_data, addr = packet
-	
 	# extract MAC info
-	dest_mac, src_mac, proto = unpack_eth(packet_data[0:14])
-	
-	# extract IP info
-	version, dest_ip, src_ip, protocol, iph_length = unpack_ip(packet_data[14:34])
-	
-	# extract TCP/UDP/ICMP packet data
-	dest_port, src_port = unpack_data(protocol, packet_data, iph_length)
-	
-	if dest_port == "ICMP" and src_port == "ICMP":
-		print(f'{BLUE}{src_ip : <15}{END}[{src_mac}{END}] {get_proto(protocol)}  {YELLOW}\u27f9   {RED}{dest_ip : <15}{END}[{dest_mac}{END}]')
-	elif dest_port and src_port:
-		src = f'{src_ip}:{END}{src_port}'
-		dest = f'{dest_ip}:{END}{dest_port}'
-		print(f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] {get_proto(protocol)}  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]')
-		
-		#print(f'{END}{idx}| {BLUE}{src_ip : <15}:{YELLOW}{src_port : <5}{END}[{src_mac}{END}] {get_proto(protocol)}  {YELLOW}\u2192  {RED}{dest_ip : >15}:{YELLOW}{dest_port : >5}{END}[{dest_mac}{END}]')
+	src_mac, dest_mac, eth_type = unpack_eth(packet_data[0:14])
+	# display packet
+	display_packet_info(src_mac, dest_mac, eth_type, packet_data)
 
 async def listen():
-	idx = 1
 	while True:
-		await read_socket(idx)
-		idx += 1
-
+		await read_socket()
 
 if __name__ == "__main__":
 	# Print ProtoPhile header
