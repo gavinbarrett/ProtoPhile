@@ -1,5 +1,5 @@
 ## Description
-This is a host-based protocol analyzer/intrusion detection system written in Python; It allows you to collect all network traffic to the host it's running on.
+ProtoPhile is a protocol analyzer focused on descriptive power and legibility. It allows for the collection of all network traffic to and from the host it's running on.
 
 # Example Output
-<img src='./images/protophile_example.png'>
+<img src='./images/protophile.png'>
