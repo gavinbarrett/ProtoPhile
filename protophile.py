@@ -121,19 +121,26 @@ def serialize_packet_info(src_mac, dest_mac, eth_type, packet_data):
 		# IPv4
 		if protocol == 1:
 			# ICMP packet
-			return f'{BLUE}{src_ip : <15}{END}[{src_mac}{END}] ICMP  {YELLOW}\u27f9   {RED}{dest_ip : <15}{END}[{dest_mac}{END}]'
+			return f'{BLUE}{src_ip : <21}{END}[{CYAN}{src_mac}{END}] ICMP {YELLOW}\u27f9   {RED}{dest_ip : <21}{END}[{CYAN}{dest_mac}{END}]'
 		elif protocol == 6:
 			# TCP packet
 			src_port, dest_port = unpack_tcp(packet_data[34:54])
 			src = f'{src_ip}:{END}{src_port}'
 			dest = f'{dest_ip}:{END}{dest_port}'
+			print(packet_data)
+			if src_port == 443 or dest_port == 443:
+				return f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] TLS  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
 			return f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] TCP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
 		elif protocol == 17:
 			# UDP packet
 			src_port, dest_port = unpack_udp(packet_data[34:42])
 			src = f'{src_ip}:{END}{src_port}'
 			dest = f'{dest_ip}:{END}{dest_port}'
+			proto = 'UDP'
+			if src_port == 53 or dest_port == 53:
+				return f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] DNS  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
 			return f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] UDP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
+	
 	elif eth_type == "86DD":
 		# IPv6 packet detected
 		pass
@@ -175,6 +182,6 @@ if __name__ == "__main__":
 	# Print ProtoPhile header
 	print_header()
 	# Print packet capture start time
-	print(f'Starting packet capture at {time.strftime("%I:%M:%S %p on %b %d %Y")}')
+	print(f'Starting packet capture at {time.strftime("%I:%M:%S %p on %b %d %Y")}\n')
 	# Run packet capture until program is killed
 	asyncio.run(listen())
