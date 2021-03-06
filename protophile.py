@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 import sys
 import tty
+import time
 import struct
 import socket
 import termios
 import asyncio
 import argparse
+from datetime import date
 from binascii import hexlify
 
 # read all packets captured
-sock = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0800))
+sock = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
 # bind to wireless interface
 sock.bind(('wlp2s0', 0))
 
@@ -21,13 +23,19 @@ BLUE = '\u001b[34m'
 RED = '\u001b[31m'
 END = '\033[0m'
 
+def print_header():
+	''' Print ProtoPhile header '''
+	print("   ___           _          ___ _     _ _      \n  / _ \_ __ ___ | |_ ___   / _ \ |__ (_) | ___ \n / /_)/ '__/ _ \| __/ _ \ / /_)/ '_ \| | |/ _ \\\n/ ___/| | | (_) | || (_) / ___/| | | | | |  __/\n\/    |_|  \___/ \__\___/\/    |_| |_|_|_|\___|")
+
 def unpack_ip(ip_header):
 	''' Interpret the bytes as an IP header '''
 	# unpack byte stream
 	ip_data = struct.unpack('!BBHHHBBH4s4s', ip_header)
-	#
-	version = ip_data[0]
-	#
+	# extract version number
+	version = ip_data[0] >> 4
+	ihl = version & 0x0f
+	iph_length = ihl * 4
+	# extract service type
 	service_type = ip_data[1]
 	# save length
 	length = ip_data[2]
@@ -35,8 +43,8 @@ def unpack_ip(ip_header):
 	src = socket.inet_ntoa(ip_data[8])
 	# save destination address
 	dest = socket.inet_ntoa(ip_data[9])
-
-	return version, dest, src
+	protocol = ip_data[6]
+	return version, dest, src, protocol, iph_length
 
 def unpack_eth(eth_header):
 	''' Interpret the bytes as an Eth header '''
@@ -55,25 +63,56 @@ def unpack_tcp(tcp_packet):
 	tcp = struct.unpack('!HHLLBBHHH', tcp_packet)
 	src_port = tcp[0]
 	dest_port = tcp[1]
+	#print(f'Src: {src_port}\nDest: {dest_port}')
+	data = ''
 	return dest_port, src_port
 
 def unpack_udp(udp_packet):
 	''' Interpret the bytes as a UDP packet '''
-	return struct.unpack('!HHHH', udp_packet)
+	udp = struct.unpack('!HHHH', udp_packet)
+	src_port = udp[0]
+	dest_port = udp[1]
+	data = ''
+	return src_port, dest_port
 
-def unpack_data(pack_type):
-	if pack_type == 6:
+def get_proto(proto):
+	if proto == 1:
+		return 'ICMP'
+	elif proto == 6:
 		return 'TCP'
-	elif pack_type == 17:
+	elif proto == 17:
 		return 'UDP'
 	else:
-		print(f'Unknown packet type: {pack_type}')
-		return 'Unknown'
+		return 'UNK'
+
+def unpack_data(protocol, data, iph):
+	if protocol == 1:
+		# ICMP Packet
+		return ("ICMP", "ICMP")
+	elif protocol == 6:
+		# TCP Packet
+		return unpack_tcp(data[34:54])
+	elif protocol == 17:
+		# UDP Packet
+		return unpack_udp(data[34:42])
+	elif protocol == 50:
+		# Encapsulation Security Payload
+		#print('ESP Packet encountered')
+		return (None, None)
+	elif protocol == 51:
+		# Authentication Header
+		#print('AH Packet encountered')
+		return (None, None)
+	else:
+		#print(f'Unknown packet type: Protocol #{protocol}')
+		return (None, None)
 
 def format_mac(mac):
 	''' Format the MAC address with hyphens '''
-	mac = mac.upper()
-	return ''.join([f'{mac[i:i+2]}-' if i < 10 else f'{mac[i:i+2]}' for i in range(0, len(mac), 2)])
+	# convert chars to uppercase
+	#mac = mac.upper()
+	# insert hyphens
+	return ''.join([f'{mac[i:i+2]}:' if i < 10 else f'{mac[i:i+2]}' for i in range(0, len(mac), 2)])
 
 def host_lookup(addr):
 	try:
@@ -83,25 +122,44 @@ def host_lookup(addr):
 	except:
 		return addr
 
-def read_socket(idx):
+
+async def read_socket(idx):
+	
 	# receive tuple of data and ...
 	packet = sock.recvfrom(65536)
+	
 	# grab network data
 	packet_data, addr = packet
+	
 	# extract MAC info
 	dest_mac, src_mac, proto = unpack_eth(packet_data[0:14])
+	
 	# extract IP info
-	version, dest_ip, src_ip = unpack_ip(packet_data[14:34])
+	version, dest_ip, src_ip, protocol, iph_length = unpack_ip(packet_data[14:34])
+	
 	# extract TCP/UDP/ICMP packet data
-	dest_port, src_port = unpack_tcp(packet_data[34:54])
-	print(f'{END}{idx}| {BLUE}{src_ip}:{src_port}{END}[{YELLOW}{src_mac}{END}] {YELLOW}\u2192 {RED}{dest_ip}:{dest_port}{END}[{YELLOW}{dest_mac}{END}]')
+	dest_port, src_port = unpack_data(protocol, packet_data, iph_length)
+	
+	if dest_port == "ICMP" and src_port == "ICMP":
+		print(f'{BLUE}{src_ip : <15}{END}[{src_mac}{END}] {get_proto(protocol)}  {YELLOW}\u27f9   {RED}{dest_ip : <15}{END}[{dest_mac}{END}]')
+	elif dest_port and src_port:
+		src = f'{src_ip}:{END}{src_port}'
+		dest = f'{dest_ip}:{END}{dest_port}'
+		print(f'{BLUE}{src : <25}[{CYAN}{src_mac}{END}] {get_proto(protocol)}  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]')
+		
+		#print(f'{END}{idx}| {BLUE}{src_ip : <15}:{YELLOW}{src_port : <5}{END}[{src_mac}{END}] {get_proto(protocol)}  {YELLOW}\u2192  {RED}{dest_ip : >15}:{YELLOW}{dest_port : >5}{END}[{dest_mac}{END}]')
 
-def listen():
+async def listen():
 	idx = 1
 	while True:
-		read_socket(idx)
+		await read_socket(idx)
 		idx += 1
 
+
 if __name__ == "__main__":
-	listen()
-	#asyncio.run(listen())
+	# Print ProtoPhile header
+	print_header()
+	# Print packet capture start time
+	print(f'Starting packet capture at {time.strftime("%I:%M:%S %p on %b %d %Y")}')
+	# Run packet capture until program is killed
+	asyncio.run(listen())
