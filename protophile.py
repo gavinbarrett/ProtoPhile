@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import sys
 import tty
 import time
@@ -10,10 +11,10 @@ import argparse
 from datetime import date
 from binascii import hexlify
 
-# read all packets captured
-sock = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-# bind socket to the wireless interface
-sock.bind(('wlp2s0', 0))
+
+# wlp2s0 (wireless), enp0s31f6 ()
+
+# wlp0s20f0u1
 
 # beautiful terminal colors
 YELLOW = '\u001b[33m'
@@ -88,16 +89,17 @@ def serialize_packet_info(src_mac, dest_mac, eth_type, packet_data, idx):
 		# IPv4
 		if protocol == 1:
 			# ICMP packet
-			return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S %p") : >11} {BLUE}{src_ip : <21}{END}[{CYAN}{src_mac}{END}] ICMP {YELLOW}\u27f9   {RED}{dest_ip : <21}{END}[{CYAN}{dest_mac}{END}]'
+			return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S%p") : >11} {BLUE}{src_ip : <21}{END}[{CYAN}{src_mac}{END}] ICMP {YELLOW}\u27f9   {RED}{dest_ip : <21}{END}[{CYAN}{dest_mac}{END}]'
 		elif protocol == 6:
 			# TCP packet
 			src_port, dest_port = unpack_tcp(packet_data[34:54])
 			src = f'{src_ip}:{END}{src_port}'
 			dest = f'{dest_ip}:{END}{dest_port}'
-			print(packet_data)
+			if (packet_data):
+				print(packet_data)
 			if src_port == 443 or dest_port == 443:
-				return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S %p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] TLS  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
-			return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S %p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] TCP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
+				return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S%p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] TLS  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
+			return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S%p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] TCP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
 		elif protocol == 17:
 			# UDP packet
 			src_port, dest_port = unpack_udp(packet_data[34:42])
@@ -105,8 +107,8 @@ def serialize_packet_info(src_mac, dest_mac, eth_type, packet_data, idx):
 			dest = f'{dest_ip}:{END}{dest_port}'
 			proto = 'UDP'
 			if src_port == 53 or dest_port == 53:
-				return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S %p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] DNS  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
-			return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S %p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] UDP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
+				return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S%p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] DNS  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
+			return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S%p") : >11} {BLUE}{src : <25}[{CYAN}{src_mac}{END}] UDP  {YELLOW}\u27f9   {RED}{dest : <25}[{CYAN}{dest_mac}{END}]'
 	
 	elif eth_type == "86DD":
 		# IPv6 packet detected
@@ -115,12 +117,14 @@ def serialize_packet_info(src_mac, dest_mac, eth_type, packet_data, idx):
 		# ARP packet
 		src = f'{END}[{CYAN}{src_mac}{END}]'
 		dest = f'{END}[{CYAN}{dest_mac}{END}]'
-		return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S %p") : >11} {src : >53} ARP  {YELLOW}\u27f9  {dest : >54}'
+		return f'{YELLOW}{idx : >6}{END} {time.strftime("%I:%M:%S%p") : >11} {src : >53} ARP  {YELLOW}\u27f9  {dest : >54}'
 	# drop packets that aren't ICMP/TCP/UDP
 	
 def display_packet_info(src_mac, dest_mac, eth_type, packet_data, idx):
 	''' Print the packet info to the console '''
-	print(serialize_packet_info(src_mac, dest_mac, eth_type, packet_data, idx))
+	info = serialize_packet_info(src_mac, dest_mac, eth_type, packet_data, idx)
+	if (info):
+		print(info)
 
 def host_lookup(addr):
 	try:
@@ -130,7 +134,7 @@ def host_lookup(addr):
 	except:
 		return addr
 
-async def read_socket(idx):
+async def read_socket(idx, interface):
 	''' Read a packet from the socket '''	
 	# receive tuple of data and ...
 	packet = sock.recvfrom(65536)
@@ -141,16 +145,32 @@ async def read_socket(idx):
 	# display packet
 	display_packet_info(src_mac, dest_mac, eth_type, packet_data, idx)
 
-async def listen():
+async def listen(interface):
 	idx = 1
 	while True:
-		await read_socket(idx)
+		await read_socket(idx, interface)
 		idx += 1
 
 if __name__ == "__main__":
+	# FIXME: check for a linux system
+	# get available interfaces
+	ifaces = os.listdir('/sys/class/net/')
+	if len(sys.argv) < 2:
+		print('Not enough arguments. Please call `protophile <interface>`')
+		sys.exit(1)
+	interface = sys.argv[1]
+	if interface not in ifaces:
+		print(f"Interface {interface} not found.")
+		exit(1)
+	# read all packets captured
+	sock = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+	# bind socket to the wireless interface
+	sock.bind((interface, 0x0003))
+	#sock.bind(('wlp2s0', 0x0003))
+	#sock.bind(('enp0s31f6', 0x0003))
 	# Print ProtoPhile header
 	print_header()
 	# Print packet capture start time
 	print(f'Starting packet capture at {time.strftime("%I:%M:%S %p on %b %d %Y")}\n')
 	# Run packet capture until program is killed
-	asyncio.run(listen())
+	asyncio.run(listen(interface))
